@@ -1,7 +1,11 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import axios from "axios";
+import { PDFParse } from "pdf-parse";
 import { fortnoxRequest } from "../services/api.js";
-import { ResponseFormat } from "../constants.js";
+import { getTokenProvider } from "../auth/index.js";
+import { getCurrentUserId } from "../auth/context.js";
+import { FORTNOX_API_BASE_URL, ResponseFormat } from "../constants.js";
 import {
   buildToolResponse,
   buildErrorResponse,
@@ -30,6 +34,13 @@ const GetInboxFileSchema = z.object({
 }).strict();
 
 type GetInboxFileInput = z.infer<typeof GetInboxFileSchema>;
+
+const DownloadInboxFileSchema = z.object({
+  file_id: z.string()
+    .describe("The ID (UUID) of the inbox file to download and read"),
+}).strict();
+
+type DownloadInboxFileInput = z.infer<typeof DownloadInboxFileSchema>;
 
 // API response types
 interface InboxFile {
@@ -297,6 +308,117 @@ Returns:
         }
 
         return buildToolResponse(textContent, output);
+      } catch (error) {
+        return buildErrorResponse(error);
+      }
+    }
+  );
+
+  // Download and read inbox file contents
+  server.registerTool(
+    "fortnox_download_inbox_file",
+    {
+      title: "Download & Read Inbox File",
+      description: `Download a file from the Fortnox inbox and extract its contents.
+
+For PDFs: extracts text content (amounts, dates, VAT, etc.)
+For images (jpg, png): returns the image for visual analysis.
+
+Use fortnox_list_inbox first to find file IDs, then use this tool
+to read the actual file contents.
+
+Args:
+  - file_id (string): The UUID of the file to download
+
+Returns:
+  Extracted text from PDFs, or the image content for image files.`,
+      inputSchema: DownloadInboxFileSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true
+      }
+    },
+    async (params: DownloadInboxFileInput) => {
+      try {
+        const tokenProvider = getTokenProvider();
+        const userId = getCurrentUserId();
+        const accessToken = await tokenProvider.getAccessToken(userId);
+
+        const response = await axios({
+          method: "GET",
+          url: `${FORTNOX_API_BASE_URL}/3/inbox/${params.file_id}`,
+          headers: {
+            "Authorization": `Bearer ${accessToken}`,
+          },
+          responseType: "arraybuffer",
+          timeout: 60000
+        });
+
+        const buffer = Buffer.from(response.data);
+        const contentType = (response.headers["content-type"] || "").toLowerCase();
+        const contentDisposition = response.headers["content-disposition"] || "";
+        const filenameMatch = contentDisposition.match(/filename[^;=\n]*=(?:UTF-8''|"?)([^";\n]*)/i);
+        const filename = filenameMatch ? decodeURIComponent(filenameMatch[1]) : `file_${params.file_id}`;
+
+        // Image files: return as image content for visual analysis
+        const imageTypes: Record<string, string> = {
+          "image/jpeg": "image/jpeg",
+          "image/jpg": "image/jpeg",
+          "image/png": "image/png",
+          "image/gif": "image/gif",
+          "image/webp": "image/webp",
+        };
+
+        if (imageTypes[contentType]) {
+          return {
+            content: [
+              { type: "text" as const, text: `## File: ${filename}\n\nImage file (${formatFileSize(buffer.length)}, ${contentType}). Visual content below:` },
+              { type: "image" as const, data: buffer.toString("base64"), mimeType: imageTypes[contentType] }
+            ]
+          };
+        }
+
+        // PDF files: extract text
+        if (contentType === "application/pdf" || filename.toLowerCase().endsWith(".pdf")) {
+          const parser = new PDFParse({ data: buffer });
+          const result = await parser.getText();
+          const text = result.text.trim();
+          const totalPages = result.total;
+          await parser.destroy();
+
+          if (!text) {
+            return {
+              content: [
+                { type: "text" as const, text: `## File: ${filename}\n\nPDF file (${totalPages} pages, ${formatFileSize(buffer.length)}) — no extractable text found. This PDF likely contains scanned images.\n\nReturning as image for visual analysis:` },
+                { type: "image" as const, data: buffer.toString("base64"), mimeType: "application/pdf" }
+              ]
+            };
+          }
+
+          return {
+            content: [
+              { type: "text" as const, text: `## File: ${filename}\n\n**Pages:** ${totalPages} | **Size:** ${formatFileSize(buffer.length)}\n\n### Extracted text:\n\n${text}` }
+            ]
+          };
+        }
+
+        // Other text-based files
+        if (contentType.includes("text/") || contentType.includes("xml") || contentType.includes("json")) {
+          return {
+            content: [
+              { type: "text" as const, text: `## File: ${filename}\n\n\`\`\`\n${buffer.toString("utf-8")}\n\`\`\`` }
+            ]
+          };
+        }
+
+        // Unknown type: return basic info
+        return {
+          content: [
+            { type: "text" as const, text: `## File: ${filename}\n\nFile type: ${contentType}\nSize: ${formatFileSize(buffer.length)}\n\nUnsupported file type for content extraction.` }
+          ]
+        };
       } catch (error) {
         return buildErrorResponse(error);
       }
