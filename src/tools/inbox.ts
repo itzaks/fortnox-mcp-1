@@ -13,7 +13,7 @@ import {
 const ListInboxSchema = z.object({
   folder_path: z.string()
     .optional()
-    .describe("Folder path to list. Use one of the static folder names: Inbox_s (Supplier invoices), Inbox_v (Vouchers), Inbox_kf (Customer invoices), Inbox_o (Orders), Inbox_of (Offers), Inbox_a (Asset register), Inbox_d (Daily takings), Inbox_b (Bank files), Inbox_l (Payroll files). Leave empty for root inbox."),
+    .describe("Folder ID to list. Use one of: inbox_s (Supplier invoices), inbox_v (Vouchers), inbox_kf (Customer invoices), inbox_o (Orders), inbox_of (Offers), inbox_a (Asset register), inbox_d (Daily takings), inbox_b (Bank files), inbox_l (Payroll files), inbox_lm (Simple payroll), inbox_ku (Receipts & expenses). Leave empty for root inbox."),
   response_format: z.nativeEnum(ResponseFormat)
     .default(ResponseFormat.MARKDOWN)
     .describe("Output format: 'markdown' or 'json'")
@@ -60,15 +60,17 @@ interface InboxFolderResponse {
 }
 
 const FOLDER_DESCRIPTIONS: Record<string, string> = {
-  "Inbox_a": "Asset register",
-  "Inbox_d": "Daily takings",
-  "Inbox_s": "Supplier invoices",
-  "Inbox_v": "Vouchers",
-  "Inbox_b": "Bank files",
-  "Inbox_l": "Payroll files",
-  "Inbox_kf": "Customer invoices",
-  "Inbox_o": "Orders",
-  "Inbox_of": "Offers"
+  "inbox_a": "Anlägningsregister (Asset register)",
+  "inbox_d": "Dagskassor (Daily takings)",
+  "inbox_s": "Leverantörsfakturor (Supplier invoices)",
+  "inbox_v": "Verifikationer (Vouchers)",
+  "inbox_b": "Bankfiler (Bank files)",
+  "inbox_l": "Lön (Payroll files)",
+  "inbox_lm": "Enkel Lön (Simple payroll)",
+  "inbox_ku": "Kvitto & Utlägg (Receipts & expenses)",
+  "inbox_kf": "Kundfakturor (Customer invoices)",
+  "inbox_o": "Ordrar (Orders)",
+  "inbox_of": "Offerter (Offers)"
 };
 
 function formatFileSize(bytes: number | undefined): string {
@@ -119,17 +121,13 @@ Returns:
     async (params: ListInboxInput) => {
       try {
         let endpoint = "/3/inbox";
-        const queryParams: Record<string, string> = {};
 
         if (params.folder_path) {
-          queryParams.path = params.folder_path;
+          endpoint = `/3/inbox/${params.folder_path.toLowerCase()}`;
         }
 
         const response = await fortnoxRequest<InboxFolderResponse>(
-          endpoint,
-          "GET",
-          undefined,
-          queryParams
+          endpoint
         );
         const folder = response.Folder;
         const files = folder.Files || [];
@@ -153,7 +151,7 @@ Returns:
           subfolders: folders.map((sf) => ({
             id: sf.Id,
             name: sf.Name,
-            description: FOLDER_DESCRIPTIONS[sf.Name] || null
+            description: FOLDER_DESCRIPTIONS[sf.Id] || null
           }))
         };
 
@@ -175,8 +173,8 @@ Returns:
             lines.push("| Folder | Description |");
             lines.push("|--------|-------------|");
             for (const sf of folders) {
-              const desc = FOLDER_DESCRIPTIONS[sf.Name] || "-";
-              lines.push(`| ${sf.Name} | ${desc} |`);
+              const desc = FOLDER_DESCRIPTIONS[sf.Id] || sf.Name;
+              lines.push(`| ${sf.Id} (${sf.Name}) | ${desc} |`);
             }
             lines.push("");
           }
@@ -249,15 +247,12 @@ Returns:
           for (const sf of rootFolder.Folders || []) {
             try {
               const subResponse = await fortnoxRequest<InboxFolderResponse>(
-                "/3/inbox",
-                "GET",
-                undefined,
-                { path: sf.Name }
+                `/3/inbox/${sf.Id}`
               );
               for (const f of subResponse.Folder.Files || []) {
                 if (f.Id === params.file_id) {
                   foundFile = f;
-                  foundIn = `${sf.Name} (${FOLDER_DESCRIPTIONS[sf.Name] || sf.Name})`;
+                  foundIn = `${sf.Name} (${FOLDER_DESCRIPTIONS[sf.Id] || sf.Name})`;
                   break;
                 }
               }
