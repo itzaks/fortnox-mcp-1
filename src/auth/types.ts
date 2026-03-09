@@ -21,7 +21,7 @@ export class AuthRequiredError extends Error {
   constructor(public userId?: string) {
     super(userId
       ? `Authentication required for user ${userId}`
-      : "Authentication required. Set FORTNOX_REFRESH_TOKEN environment variable."
+      : "Authentication required. Set FORTNOX_TENANT_ID (recommended) or FORTNOX_REFRESH_TOKEN environment variable."
     );
     this.name = "AuthRequiredError";
   }

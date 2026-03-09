@@ -8,10 +8,11 @@
  * Supports two modes:
  *
  * LOCAL MODE (default):
- *   Run with npx, users provide their own refresh token
+ *   Run with npx, users provide their own credentials
  *   - FORTNOX_CLIENT_ID: Fortnox app client ID (can be embedded)
  *   - FORTNOX_CLIENT_SECRET: Fortnox app client secret (can be embedded)
- *   - FORTNOX_REFRESH_TOKEN: User's OAuth2 refresh token
+ *   - FORTNOX_TENANT_ID: Tenant ID for Client Credentials flow (recommended)
+ *   - FORTNOX_REFRESH_TOKEN: User's OAuth2 refresh token (legacy alternative)
  *   - TRANSPORT: 'stdio' (default) or 'http'
  *   - PORT: HTTP server port (default: 3000)
  *
@@ -68,7 +69,7 @@ async function runStdio(): Promise<void> {
   try {
     const auth = getFortnoxAuth();
     if (!auth.isAuthenticated()) {
-      throw new Error("FORTNOX_REFRESH_TOKEN not set");
+      throw new Error("Authentication not configured. Set FORTNOX_TENANT_ID (recommended) or FORTNOX_REFRESH_TOKEN.");
     }
   } catch (error) {
     console.error(`ERROR: ${error instanceof Error ? error.message : String(error)}`);
@@ -84,7 +85,7 @@ async function runLocalHTTP(): Promise<void> {
   try {
     const auth = getFortnoxAuth();
     if (!auth.isAuthenticated()) {
-      throw new Error("FORTNOX_REFRESH_TOKEN not set");
+      throw new Error("Authentication not configured. Set FORTNOX_TENANT_ID (recommended) or FORTNOX_REFRESH_TOKEN.");
     }
   } catch (error) {
     console.error(`ERROR: ${error instanceof Error ? error.message : String(error)}`);

@@ -5,7 +5,7 @@ import { getFortnoxCredentials } from "./credentials.js";
 
 interface TokenResponse {
   access_token: string;
-  refresh_token: string;
+  refresh_token?: string;
   token_type: string;
   expires_in: number;
   scope: string;
@@ -17,17 +17,30 @@ export class EnvVarTokenProvider implements ITokenProvider {
   private clientSecret: string;
   private tokens: TokenInfo | null = null;
   private refreshPromise: Promise<string> | null = null;
+  private tenantId: string | null = null;
+  private useClientCredentials: boolean = false;
 
   constructor() {
     const { clientId, clientSecret } = getFortnoxCredentials();
     this.clientId = clientId;
     this.clientSecret = clientSecret;
 
-    // Initialize from environment if tokens provided
+    // Check for Client Credentials mode (TenantId-based, no refresh token needed)
+    const tenantId = process.env.FORTNOX_TENANT_ID;
     const refreshToken = process.env.FORTNOX_REFRESH_TOKEN;
     const accessToken = process.env.FORTNOX_ACCESS_TOKEN;
 
-    if (refreshToken) {
+    if (tenantId) {
+      this.tenantId = tenantId;
+      this.useClientCredentials = true;
+      // Initialize with empty tokens; will be populated on first request
+      this.tokens = {
+        accessToken: accessToken || "",
+        refreshToken: "",
+        expiresAt: accessToken ? Date.now() + 3600000 : 0,
+        scope: process.env.FORTNOX_SCOPE || ""
+      };
+    } else if (refreshToken) {
       this.tokens = {
         accessToken: accessToken || "",
         refreshToken: refreshToken,
@@ -46,7 +59,10 @@ export class EnvVarTokenProvider implements ITokenProvider {
 
     if (needsRefresh || !this.tokens.accessToken) {
       if (!this.refreshPromise) {
-        this.refreshPromise = this.refreshAccessToken().finally(() => {
+        const refreshFn = this.useClientCredentials
+          ? this.fetchClientCredentialsToken()
+          : this.refreshAccessToken();
+        this.refreshPromise = refreshFn.finally(() => {
           this.refreshPromise = null;
         });
       }
@@ -57,6 +73,9 @@ export class EnvVarTokenProvider implements ITokenProvider {
   }
 
   isAuthenticated(_userId?: string): boolean {
+    if (this.useClientCredentials) {
+      return this.tenantId !== null;
+    }
     return this.tokens !== null && this.tokens.refreshToken !== "";
   }
 
@@ -106,6 +125,42 @@ export class EnvVarTokenProvider implements ITokenProvider {
     return `${FORTNOX_OAUTH_URL}/auth?${params.toString()}`;
   }
 
+  private async fetchClientCredentialsToken(): Promise<string> {
+    if (!this.tenantId) {
+      throw new Error("No tenant ID available for Client Credentials flow");
+    }
+
+    const tokenUrl = `${FORTNOX_OAUTH_URL}/token`;
+    const auth = Buffer.from(`${this.clientId}:${this.clientSecret}`).toString("base64");
+
+    try {
+      const response = await axios.post<TokenResponse>(
+        tokenUrl,
+        new URLSearchParams({
+          grant_type: "client_credentials"
+        }),
+        {
+          headers: {
+            "Authorization": `Basic ${auth}`,
+            "Content-Type": "application/x-www-form-urlencoded",
+            "TenantId": this.tenantId
+          }
+        }
+      );
+
+      this.tokens = {
+        accessToken: response.data.access_token,
+        refreshToken: "",
+        expiresAt: Date.now() + response.data.expires_in * 1000,
+        scope: response.data.scope
+      };
+      return this.tokens.accessToken;
+    } catch (error) {
+      this.tokens = null;
+      throw this.handleAuthError(error, "Failed to obtain access token via Client Credentials");
+    }
+  }
+
   private async refreshAccessToken(): Promise<string> {
     if (!this.tokens?.refreshToken) {
       throw new Error("No refresh token available");
@@ -140,7 +195,7 @@ export class EnvVarTokenProvider implements ITokenProvider {
   private storeTokens(response: TokenResponse): void {
     this.tokens = {
       accessToken: response.access_token,
-      refreshToken: response.refresh_token,
+      refreshToken: response.refresh_token || this.tokens?.refreshToken || "",
       expiresAt: Date.now() + response.expires_in * 1000,
       scope: response.scope
     };
