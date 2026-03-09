@@ -351,6 +351,7 @@ Returns:
           url: `${FORTNOX_API_BASE_URL}/3/inbox/${params.file_id}`,
           headers: {
             "Authorization": `Bearer ${accessToken}`,
+            "Accept": "*/*",
           },
           responseType: "arraybuffer",
           timeout: 60000
