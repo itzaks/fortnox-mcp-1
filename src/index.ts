@@ -45,6 +45,7 @@ import { registerSupplierInvoiceTools } from "./tools/supplierInvoices.js";
 import { registerOrderTools } from "./tools/orders.js";
 import { registerBIAnalyticsTools } from "./tools/biAnalytics.js";
 import { registerInboxTools } from "./tools/inbox.js";
+import { registerBalanceTools } from "./tools/balances.js";
 
 function createMcpServer(): McpServer {
   const server = new McpServer({
@@ -63,6 +64,7 @@ function createMcpServer(): McpServer {
   registerOrderTools(server);
   registerBIAnalyticsTools(server);
   registerInboxTools(server);
+  registerBalanceTools(server);
 
   return server;
 }
