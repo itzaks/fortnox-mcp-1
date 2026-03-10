@@ -58,13 +58,39 @@ interface FinancialYearsResponse {
   FinancialYears: FinancialYear[];
 }
 
+let cachedCurrentYearId: number | null = null;
+
+async function getCurrentFinancialYearId(): Promise<number | undefined> {
+  if (cachedCurrentYearId) return cachedCurrentYearId;
+  try {
+    const response = await fortnoxRequest<FinancialYearsResponse>("/3/financialyears");
+    const years = response.FinancialYears || [];
+    const today = new Date().toISOString().slice(0, 10);
+    const current = years.find(y => y.FromDate <= today && y.ToDate >= today);
+    if (current) {
+      cachedCurrentYearId = current.Id;
+      return current.Id;
+    }
+    // Fallback: return the highest ID (most recent year)
+    if (years.length > 0) {
+      const latest = years.reduce((a, b) => (a.Id > b.Id ? a : b));
+      cachedCurrentYearId = latest.Id;
+      return latest.Id;
+    }
+  } catch {
+    // Fall through — let Fortnox use its own default
+  }
+  return undefined;
+}
+
 async function fetchAccountBalance(
   accountNumber: number,
   financialYear?: number
 ): Promise<FortnoxAccount | null> {
   try {
+    const yearId = financialYear ?? await getCurrentFinancialYearId();
     const params: Record<string, string | number | boolean | undefined> = {};
-    if (financialYear) params.financialyear = financialYear;
+    if (yearId) params.financialyear = yearId;
     const response = await fortnoxRequest<AccountResponse>(
       `/3/accounts/${accountNumber}`, "GET", undefined, params
     );
